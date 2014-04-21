@@ -5,6 +5,7 @@ import org.devzen.tools.JsType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -26,6 +27,7 @@ public class FooBean {
     private Person person;
     private Nothing nothing;
     private Car[] cars;
+    private List<String> addresses;
     private Map<String, Person> mapValue;
 
     public String getStrValue() {
@@ -130,5 +132,13 @@ public class FooBean {
 
     public void setMapValue(Map<String, Person> mapValue) {
         this.mapValue = mapValue;
+    }
+
+    public List<String> getAddresses() {
+        return addresses;
+    }
+
+    public void setAddresses(List<String> addresses) {
+        this.addresses = addresses;
     }
 }

@@ -5,7 +5,9 @@ import org.reflections.Reflections;
 
 import java.beans.PropertyDescriptor;
 import java.io.*;
+import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.*;
 
 /**
@@ -39,9 +41,10 @@ public class JsTypeConverter {
         map.put("java.lang.Double", "Number");
         map.put("java.lang.Boolean", "Boolean");
         map.put("java.lang.Character", "String");
-        map.put("java.lang.Date", "String");
+        map.put("java.util.Date", "String");
         map.put("java.math.BigDecimal", "Number");
         map.put("java.math.BigInteger", "Number");
+        map.put("java.lang.Object", "Object");
 
         BASE_TYPE_MAPPING = Collections.unmodifiableMap(map);
     }
@@ -58,7 +61,7 @@ public class JsTypeConverter {
         // 一个用来保存所有的要转换的类型的属性Map
         Map<String, PropertyDescriptor[]> beanMap = new HashMap<String, PropertyDescriptor[]>();
         // 一个用来保存所有要转换的类型的Map
-        Map<String, Class> classMap = new HashMap<String, Class>();
+        Map<Class, String> classMap = new HashMap<Class, String>();
 
         // 扫描到所有的需要转换的Java类型
         List<Class> classes = findAllJsTypes(packagePrefix);
@@ -72,7 +75,7 @@ public class JsTypeConverter {
             // 放到Map
             if (!beanMap.containsKey(beanName)) {
                 beanMap.put(beanName, properties);
-                classMap.put(beanName, clz);
+                classMap.put(clz, beanName);
             }
         }
 
@@ -94,7 +97,7 @@ public class JsTypeConverter {
 
         // 针对每一个类生成JsDoc然后输出到流
         for (String beanName : beanMap.keySet()) {
-            String jsDoc = generateJsDocOfJsType(beanName, classMap.get(beanName), beanMap.get(beanName));
+            String jsDoc = generateJsDocOfJsType(beanName, beanMap, classMap);
             bw.write(jsDoc);
         }
 
@@ -103,25 +106,27 @@ public class JsTypeConverter {
 
     }
 
-    protected static void removeUnsupportedProperties(String beanName, Map<String, PropertyDescriptor[]> beanMap, Map<String, Class> classMap) {
+    protected static void removeUnsupportedProperties(String beanName, Map<String, PropertyDescriptor[]> beanMap, Map<Class, String> classMap) {
         PropertyDescriptor[] properties = beanMap.get(beanName);
         List<PropertyDescriptor> targetProperties = new ArrayList<PropertyDescriptor>(properties.length);
         for (PropertyDescriptor property : properties) {
             Class<?> propertyType = property.getPropertyType();
-            if(isSupportedBasicType(classMap, propertyType)){
+            if (isSupportedBasicType(classMap, propertyType)) {
                 targetProperties.add(property);
-            } else if(Collection.class.isAssignableFrom(propertyType)){
-                ParameterizedType parameterizedType = (ParameterizedType) propertyType.getGenericSuperclass();
-                Class<?> valueClass = (Class<?>)parameterizedType.getActualTypeArguments()[0];
-                if(isSupportedBasicType(classMap, valueClass)){
+            } else if (propertyType.isArray()) {
+                Class<?> valueClass = propertyType.getComponentType();
+                if (isSupportedBasicType(classMap, valueClass)) {
                     targetProperties.add(property);
                 }
-            } else if(Map.class.isAssignableFrom(propertyType)){
-                //property.getReadMethod().
-                ParameterizedType parameterizedType = (ParameterizedType) propertyType.getGenericSuperclass();
-                Class<?> keyClass = (Class<?>)parameterizedType.getActualTypeArguments()[0];
-                Class<?> valueClass = (Class<?>)parameterizedType.getActualTypeArguments()[1];
-                if(isSupportedBasicType(classMap, keyClass) && isSupportedBasicType(classMap, valueClass)){
+            } else if (Collection.class.isAssignableFrom(propertyType)) {
+                Class<?> valueClass = getSuperClassGenericTypeOfProperty(property, 0);
+                if (isSupportedBasicType(classMap, valueClass)) {
+                    targetProperties.add(property);
+                }
+            } else if (Map.class.isAssignableFrom(propertyType)) {
+                Class<?> keyClass = getSuperClassGenericTypeOfProperty(property, 0);
+                Class<?> valueClass = getSuperClassGenericTypeOfProperty(property, 1);
+                if (isSupportedBasicType(classMap, keyClass) && isSupportedBasicType(classMap, valueClass)) {
                     targetProperties.add(property);
                 }
             }
@@ -130,8 +135,25 @@ public class JsTypeConverter {
         beanMap.put(beanName, targetProperties.toArray(new PropertyDescriptor[targetProperties.size()]));
     }
 
-    private static boolean isSupportedBasicType(Map<String, Class> classMap, Class<?> genericClass) {
-        return BASE_TYPE_MAPPING.containsKey(genericClass.getName()) || classMap.containsValue(genericClass);
+    private static boolean isSupportedBasicType(Map<Class, String> classMap, Class<?> genericClass) {
+        return genericClass != null && (BASE_TYPE_MAPPING.containsKey(genericClass.getName()) || classMap.containsKey(genericClass));
+    }
+
+    private static String getSupportedBasicType(Map<Class, String> classMap, Class<?> genericClass) {
+        if (genericClass == null) {
+            return "Object";
+        }
+
+        String clzName = genericClass.getName();
+
+        if (BASE_TYPE_MAPPING.containsKey(clzName)) {
+            return BASE_TYPE_MAPPING.get(clzName);
+        }
+
+        if (classMap.containsKey(genericClass)) {
+            return classMap.get(genericClass);
+        }
+        return "Object";
     }
 
     /**
@@ -179,26 +201,94 @@ public class JsTypeConverter {
     /**
      * 生成JSDoc
      *
-     * @param name       VO名字
-     * @param properties 所有属性
+     * @param beanName VO名字
+     * @param beanMap  所有属性
+     * @param classMap 所有类
      * @return JSDoc
      */
-    private static String generateJsDocOfJsType(String name, Class clz, PropertyDescriptor[] properties) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("/**");
-        sb.append(" *").append(name).append("(").append(clz.getName()).append(")");
-        sb.append(" * @typedef {Object} ").append(name);
-        for (PropertyDescriptor property : properties) {
-            sb.append(" * @property {").append(getTypeOfProperty(property)).append("} ").append(property.getName());
+    protected static String generateJsDocOfJsType(String beanName, Map<String, PropertyDescriptor[]> beanMap, Map<Class, String> classMap) {
+        Class<?> clz = null;
+        for (Map.Entry<Class, String> entry : classMap.entrySet()) {
+            if (entry.getValue().equals(beanName)) {
+                clz = entry.getKey();
+                break;
+            }
         }
-        sb.append(" *");
-        sb.append(" */");
+        if (clz == null) {
+            return "";
+        }
 
+        PropertyDescriptor[] properties = beanMap.get(beanName);
+        StringBuilder sb = new StringBuilder();
+        sb.append("/**\n");
+        sb.append(" * ").append(beanName).append(" (").append(clz.getName()).append(")\n");
+        sb.append(" *\n");
+        sb.append(" * @typedef {Object} ").append(beanName).append("\n");
+        for (PropertyDescriptor property : properties) {
+            sb.append(" * @property {").append(getTypeOfProperty(property, classMap)).append("} ").append(property.getName()).append("\n");
+        }
+        sb.append(" */\n");
         return sb.toString();
     }
 
-    private static String getTypeOfProperty(PropertyDescriptor property) {
-        return null;
+    protected static String getTypeOfProperty(PropertyDescriptor property, Map<Class, String> classMap) {
+        Class<?> propertyType = property.getPropertyType();
+        if (isSupportedBasicType(classMap, propertyType)) {
+            return getSupportedBasicType(classMap, propertyType);
+        } else if (propertyType.isArray()) {
+            Class<?> valueClass = propertyType.getComponentType();
+            return "Array.<" + getSupportedBasicType(classMap, valueClass) + ">";
+        } else if (Collection.class.isAssignableFrom(propertyType)) {
+            Class<?> valueClass = getSuperClassGenericTypeOfProperty(property, 0);
+            return "Array.<" + getSupportedBasicType(classMap, valueClass) + ">";
+        } else if (Map.class.isAssignableFrom(propertyType)) {
+            Class<?> keyClass = getSuperClassGenericTypeOfProperty(property, 0);
+            Class<?> valueClass = getSuperClassGenericTypeOfProperty(property, 1);
+            return "Object.<" + getSupportedBasicType(classMap, keyClass) + "," + getSupportedBasicType(classMap, valueClass) + ">";
+        }
+        return "Object";
+    }
+
+
+    protected static Class<?> getSuperClassGenericTypeOfProperty(PropertyDescriptor property, int index) {
+
+        Type type;
+        if (property.getReadMethod() != null) {
+            Method method = property.getReadMethod();
+            type = method.getGenericReturnType();
+        } else {
+            Method method = property.getWriteMethod();
+            type = method.getGenericParameterTypes()[0];
+        }
+
+        if (type == null) {
+            return null;
+        }
+
+        return getSuperClassGenericType(type, index);
+    }
+
+    protected static Class<?> getSuperClassGenericType(Type genType, int index) {
+        // 如果没有实现ParameterizedType接口，即不支持泛型，直接返回Object.class
+        if (!(genType instanceof ParameterizedType)) {
+            return Object.class;
+        }
+        // 返回表示此类型实际类型参数的Type对象的数组,数组里放的都是对应类型的Class
+        Type[] params = ((ParameterizedType) genType).getActualTypeArguments();
+        if (index >= params.length || index < 0) {
+            throw new RuntimeException("你输入的索引" + (index < 0 ? "不能小于0" : "超出了参数的总数"));
+        }
+        Type param = params[index];
+        if (!(param instanceof Class)) {
+            if (param instanceof ParameterizedType) {
+                Type rawType = ((ParameterizedType) param).getRawType();
+                if (rawType instanceof Class) {
+                    return (Class<?>) rawType;
+                }
+            }
+            return Object.class;
+        }
+        return (Class<?>) param;
     }
 
 }

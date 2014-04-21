@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.is;
 
@@ -59,7 +60,7 @@ public class JsTypeConverterTest {
 
         // 扫描到所有的需要转换的Java类型
         List<Class> classes = JsTypeConverter.findAllJsTypes("org.devzen.tools.sample");
-        Map<String, Class> classMap = new HashMap<String, Class>();
+        Map<Class, String> classMap = new HashMap<Class, String>();
 
         for (Class clz : classes) {
             // 取得Js对应的名字
@@ -70,13 +71,58 @@ public class JsTypeConverterTest {
             // 放到Map
             if (!beanMap.containsKey(beanName)) {
                 beanMap.put(beanName, properties);
-                classMap.put(beanName, clz);
+                classMap.put(clz, beanName);
             }
         }
 
         JsTypeConverter.removeUnsupportedProperties("Earth", beanMap, classMap);
 
         PropertyDescriptor[] properties = beanMap.get("Earth");
-        Assert.assertEquals(11, properties.length);
+        Assert.assertEquals(12, properties.length);
+    }
+
+    @Test
+    public void testGenerateJsDocOfJsType() {
+        // 一个用来保存所有的要转换的类型的属性Map
+        Map<String, PropertyDescriptor[]> beanMap = new HashMap<String, PropertyDescriptor[]>();
+
+        // 扫描到所有的需要转换的Java类型
+        List<Class> classes = JsTypeConverter.findAllJsTypes("org.devzen.tools.sample");
+        Map<Class, String> classMap = new HashMap<Class, String>();
+
+        for (Class clz : classes) {
+            // 取得Js对应的名字
+            String beanName = JsTypeConverter.getBeanNameOfJsType(clz);
+            // 取得Js对应的属性
+            PropertyDescriptor[] properties = JsTypeConverter.getPropertiesOfJsType(clz);
+
+            // 放到Map
+            if (!beanMap.containsKey(beanName)) {
+                beanMap.put(beanName, properties);
+                classMap.put(clz, beanName);
+            }
+        }
+
+        JsTypeConverter.removeUnsupportedProperties("Earth", beanMap, classMap);
+        String jsDoc = JsTypeConverter.generateJsDocOfJsType("Earth", beanMap, classMap);
+        Assert.assertNotNull(jsDoc);
+        Assert.assertThat(jsDoc, containsString("/**"));
+        Assert.assertThat(jsDoc, containsString(" * Earth (org.devzen.tools.sample.FooBean)"));
+        Assert.assertThat(jsDoc, containsString(" *"));
+        Assert.assertThat(jsDoc, containsString(" * @typedef {Object} Earth"));
+        Assert.assertThat(jsDoc, containsString(" * @property {String} strValue"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Array.<String>} addresses"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Number} bigIntegerValue"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Boolean} boolValue"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Array.<Car>} cars"));
+        Assert.assertThat(jsDoc, containsString(" * @property {String} dateValue"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Number} decimalValue"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Number} intValue"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Number} longValue"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Object.<String,Person>} mapValue"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Person} person"));
+        Assert.assertThat(jsDoc, containsString(" * @property {Number} shortValue"));
+        Assert.assertThat(jsDoc, containsString(" */"));
+        System.out.println(jsDoc);
     }
 }
